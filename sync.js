@@ -6,7 +6,7 @@
   'use strict';
   const SUPABASE_URL = 'https://ejiatkzbqbxclpsigoaf.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_qu1pqpjwKZld-3UrtrvLgA_vrVupMkk'; // public key; data is protected by row-level security
-  const KV_KEYS = ['settings', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'pins'];
+  const KV_KEYS = ['settings', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'pins', 'exam'];
   const MARGIN_MS = 24 * 3600 * 1000; // re-check a day of overlap so small clock differences never lose a change
 
   let client = null;

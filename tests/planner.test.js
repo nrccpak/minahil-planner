@@ -160,4 +160,54 @@ t('summary for parent view', () => {
   assert.equal(P.toHHMM(s.avgSleep), '22:33');
 });
 
+
+t('weekend split: tests to Sunday, Friday ~40%, Sunday lighter, small loads stay on Friday', () => {
+  const tasks = [
+    { id: 'a', minutes: 40 }, { id: 'b', minutes: 30 }, { id: 'c', minutes: 30 }, { id: 'd', minutes: 40 },
+    { id: 'e', minutes: 30 }, { id: 'f', minutes: 20 }, { id: 't', minutes: 30, test: true }
+  ];
+  const w = P.weekendSplit(tasks, S);
+  assert.ok(w.sun.includes('t'));
+  assert.ok(w.minutes.fri >= 60 && w.minutes.fri <= 80, 'fri ' + w.minutes.fri);
+  assert.ok(w.minutes.sat >= w.minutes.sun, 'sun lighter than sat');
+  assert.equal(w.fri.length + w.sat.length + w.sun.length, tasks.length);
+  const small = P.weekendSplit([{ id: 'x', minutes: 30 }, { id: 'y', minutes: 20 }], S);
+  assert.deepEqual(small.fri, ['x', 'y']); assert.equal(small.sat.length, 0);
+});
+
+t('exam mode: active window, harder and nearer papers get more time', () => {
+  const exam = { start: '2026-12-01', papers: [
+    { id: 'p1', date: '2026-12-03', subject: 'Maths', level: 'hard' },
+    { id: 'p2', date: '2026-12-08', subject: 'Urdu-W', level: 'easy' },
+    { id: 'p3', date: '2026-12-05', subject: 'Gen. Science', level: 'ok' } ] };
+  assert.ok(!P.examActive(exam, '2026-11-30'));
+  assert.ok(P.examActive(exam, '2026-12-01'));
+  assert.ok(P.examActive(exam, '2026-12-08'));
+  assert.ok(!P.examActive(exam, '2026-12-09'));
+  const plan = P.examPlan(exam, '2026-12-01', 180);
+  const m = {}; plan.forEach(x => { m[x.subject] = x.minutes; });
+  assert.ok(m.Maths > m['Gen. Science'] && m['Gen. Science'] > (m['Urdu-W'] || 0));
+  assert.ok(plan.reduce((a, x) => a + x.minutes, 0) <= 185);
+  // after Maths paper day, Maths no longer planned
+  assert.ok(!P.examPlan(exam, '2026-12-03', 120).some(x => x.subject === 'Maths'));
+  assert.deepEqual(P.examPlan(exam, '2026-12-01', 10), []);
+});
+
+t('exam revision tasks do not change normal learned times', () => {
+  const day = { date: 'x', tasks: [{ id: 'a', subject: 'Maths', type: 'questions', units: 3, minutes: 20, exam: true }],
+    feedback: { tasks: { a: { status: 'done', time: 'plus30', difficulty: 'ok' } } } };
+  assert.equal(P.learnFromDay(day, { Maths: { questions: 6 } }, {}).changes.length, 0);
+});
+
+t('alerts: 3 days late, repeated "didn\'t understand", frequent morning catch-up', () => {
+  const mk = (date, finish, extra) => Object.assign({ date, tasks: [{ id: 'm', subject: 'Maths' }],
+    feedback: { saved: true, finish, tasks: { m: { reasons: ['understand'] } } } }, extra || {});
+  const days = [mk('2026-11-02', '19:45'), mk('2026-11-03', '19:50', { morning: { taskIds: ['m'] } }),
+    mk('2026-11-04', '20:10', { morning: { taskIds: ['m'] } }), { date: '2026-11-05', pause: true }];
+  const a = P.alerts(days, S).map(x => x.kind);
+  assert.ok(a.includes('late') && a.includes('understand') && !a.includes('morning'));
+  const ok = P.alerts([mk('2026-11-02', '19:00'), mk('2026-11-03', '19:50'), mk('2026-11-04', '20:10')].map(d => { d.feedback.tasks = {}; return d; }), S);
+  assert.equal(ok.length, 0);
+});
+
 console.log(`\nAll ${n} tests passed.`);

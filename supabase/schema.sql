@@ -4,7 +4,7 @@
 
 create table if not exists public.app_kv (
   owner uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  key text not null check (key in ('settings','meta','rates','samples','subjectScore','carry','pins')),
+  key text not null check (key in ('settings','meta','rates','samples','subjectScore','carry','pins','exam')),
   value jsonb not null,
   updated_at timestamptz not null default now(),
   primary key (owner, key)

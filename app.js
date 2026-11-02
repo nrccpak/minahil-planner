@@ -22,6 +22,8 @@
     subjectScore: {},
     carry: [],              // tasks moved to the weekend / later
     kvStamp: {},            // when each setting was last changed (for cloud sync)
+    exam: null,             // {start, papers:[{id,date,subject,level}]}
+    examDraft: { date: '', subject: 'Maths', level: 'ok' },
     cloud: { email: '', error: '', busy: false, info: '' },
     date: todayStr(),
     day: null,
@@ -86,7 +88,7 @@
   };
 
   // ---------- persistence ----------
-  const SYNC_KEYS = ['settings', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'pins'];
+  const SYNC_KEYS = ['settings', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'pins', 'exam'];
   function saveKv(key) {
     if (SYNC_KEYS.indexOf(key) >= 0) { S.kvStamp[key] = new Date().toISOString(); Store.kvSet('kvStamp', S.kvStamp); }
     const p = Store.kvSet(key, S[key]);
@@ -147,7 +149,7 @@
 
   async function boot() {
     try { await Store.open(); } catch (e) { /* memory fallback */ }
-    const keys = ['settings', 'pins', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'kvStamp'];
+    const keys = ['settings', 'pins', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'kvStamp', 'exam'];
     const vals = await Promise.all(keys.map(function (k) { return Store.kvGet(k); }));
     keys.forEach(function (k, i) { if (vals[i] !== undefined && vals[i] !== null) S[k] = vals[i]; });
     S.settings = Object.assign({}, APP_DEFAULTS, S.settings || {});
@@ -178,6 +180,9 @@
   }
 
   // ---------- plan for a day ----------
+  function isDateStr(v) { return /^\d{4}-\d{2}-\d{2}$/.test(v || ''); }
+  function shortDay(dateStr) { return parseDate(dateStr).toLocaleDateString('en-GB', { weekday: 'short' }); }
+  function movedLabel(to) { return to === 'weekend' ? 'weekend' : to === 'dropped' ? 'dropped' : isDateStr(to) ? niceDate(to) : to; }
   function excludedIds(day) {
     const ids = {};
     (day.morning && day.morning.taskIds || []).forEach(function (id) { ids[id] = 'morning'; });
@@ -222,6 +227,7 @@
     switch (S.view) {
       case 'rates-intro': body = renderRatesIntro(); break;
       case 'rates': body = renderRates(); break;
+      case 'exam': body = renderExam(); break;
       case 'sheet': body = renderSheetView(); break;
       case 'evening': body = renderEvening(); break;
       case 'me': body = renderMe(); break;
@@ -245,7 +251,7 @@
       S.role === 'parent' ? ['parent', 'Parent', ICON.parent] : ['me', 'My day', ICON.me]
     ];
     return '<nav class="tabbar" aria-label="Main"><div class="tabbar-in">' + tabs.map(function (t) {
-      const cur = S.view === t[0] || (t[0] === 'me' && S.view === 'rates') || (t[0] === 'parent' && S.view === 'rates');
+      const cur = S.view === t[0] || ((t[0] === 'me' || t[0] === 'parent') && (S.view === 'rates' || S.view === 'exam'));
       return '<button class="tab" type="button" data-act="go" data-view="' + t[0] + '"' + (cur ? ' aria-current="page"' : '') + '>' + t[2] + '<span>' + t[1] + '</span></button>';
     }).join('') + '</div></nav>';
   }
@@ -426,9 +432,11 @@
         '<button class="btn small" type="button" data-act="weekend-times">Use weekend times</button></div>';
     }
     if (weekday(day.date) === 5) {
-      html += '<div class="notice info"><b>Friday diary</b><span class="body">Teachers give more on Fridays. If it doesn’t fit, move some tasks to the weekend; they wait for you under “Carried over”.</span></div>';
+      html += '<div class="notice info"><b>Friday diary</b><span class="body">After adding the tasks, use <b>Weekend plan</b> to spread them over Friday, Saturday and Sunday.</span></div>';
     }
     html += '</div>';
+
+    if (P.examActive(S.exam, day.date)) html += renderExamCard(day);
 
     // Step 1: photo
     html += '<div class="card"><span class="step-label">Step 1 · Diary photo</span>' +
@@ -461,6 +469,7 @@
         (day.manual ? '<button class="btn small ghost" type="button" data-act="use-suggested">Use suggested order</button>' : '<span class="small muted">suggested</span>') + '</div>' +
         '<p class="small muted">Drag the dots, or use the arrows, to put tasks in the order you want. Leaving it as it is means you agree.</p>' +
         '<ul class="task-list" id="task-list">' + day.tasks.map(function (t, i) { return renderTaskItem(t, i, day.tasks.length, ex[t.id]); }).join('') + '</ul></div>';
+      if (weekday(day.date) === 5) html += renderWeekendCard(day);
       html += renderPlanCard(day);
     } else {
       html += '<div class="card flat"><p class="muted">No tasks yet. Add them from the diary above, or tap <b>Pause today</b> on a holiday.</p></div>';
@@ -468,11 +477,149 @@
     return html;
   }
 
+  // ---------- weekend mode (Friday diary) ----------
+  function renderWeekendCard(day) {
+    const sat = P.addDays(day.date, 1), sun = P.addDays(day.date, 2);
+    if (day.spread) {
+      const satDay = getDay(sat), sunDay = getDay(sun);
+      const n = function (d) { return d ? d.tasks.filter(function (t) { return t.spreadFrom === day.date; }).length : 0; };
+      return '<div class="card"><span class="step-label">Weekend plan</span><h2>Spread over the weekend</h2>' +
+        '<p>Saturday: <b>' + n(satDay) + '</b> task' + (n(satDay) === 1 ? '' : 's') + ' · Sunday: <b>' + n(sunDay) + '</b> task' + (n(sunDay) === 1 ? '' : 's') +
+        ' · weekend window ' + hm(S.settings.weekendStart) + '–' + hm(S.settings.weekendEnd) + '</p>' +
+        '<p class="small muted">They are waiting on Saturday’s and Sunday’s Today screen. Tests for Monday are on Sunday as revision.</p>' +
+        '<button class="btn small" type="button" data-act="weekend-undo">Undo spread</button></div>';
+    }
+    const ex = excludedIds(day);
+    const pool = withMinutes(day.tasks.filter(function (t) { return !ex[t.id] || ex[t.id] === 'morning'; }));
+    const w = P.weekendSplit(pool, S.settings);
+    function list(ids) {
+      if (!ids.length) return '<span class="muted">nothing</span>';
+      return ids.map(function (id) { const t = taskById(day, id); return t ? esc(t.subject) + (t.test ? ' (test)' : '') : ''; }).join(', ');
+    }
+    return '<div class="card"><span class="step-label">Weekend plan</span><h2>Spread Friday’s diary</h2>' +
+      '<div class="stack small">' +
+      '<div><b>Friday ' + hm(S.settings.studyStart) + '–' + hm(S.settings.finishLine) + '</b> · ' + w.minutes.fri + ' min<br>' + list(w.fri) + '</div>' +
+      '<div><b>Saturday ' + hm(S.settings.weekendStart) + '–' + hm(S.settings.weekendEnd) + '</b> · ' + w.minutes.sat + ' min<br>' + list(w.sat) + '</div>' +
+      '<div><b>Sunday ' + hm(S.settings.weekendStart) + '–' + hm(S.settings.weekendEnd) + '</b> · ' + w.minutes.sun + ' min (kept lighter)<br>' + list(w.sun) + '</div></div>' +
+      '<p class="small muted">Tests are for Monday, so they go on Sunday as revision. Change the order above to change what stays on Friday.</p>' +
+      '<button class="btn primary block" type="button" data-act="weekend-spread"' + (w.sat.length || w.sun.length ? '' : ' disabled') + '>Spread over the weekend</button>' +
+      (w.sat.length || w.sun.length ? '' : '<p class="small muted">Light Friday: everything fits today.</p>') + '</div>';
+  }
+  async function spreadWeekend() {
+    const day = S.day;
+    const ex = excludedIds(day);
+    day.morning.taskIds = [];
+    const pool = withMinutes(day.tasks.filter(function (t) { return !ex[t.id] || ex[t.id] === 'morning'; }));
+    const w = P.weekendSplit(pool, S.settings);
+    const targets = [[P.addDays(day.date, 1), w.sat], [P.addDays(day.date, 2), w.sun]];
+    for (const pair of targets) {
+      const date = pair[0], ids = pair[1];
+      if (!ids.length) continue;
+      const d = getDay(date) || newDay(date);
+      if (d.locked) { toast(niceDate(date) + ' already has a sheet; change it there first'); return; }
+      d.tasks = d.tasks.filter(function (t) { return t.spreadFrom !== day.date; });
+      ids.forEach(function (id) {
+        const t = taskById(day, id);
+        d.tasks.push(Object.assign({}, t, { id: uid(), spreadFrom: day.date, origId: id, minutes: null, note: t.test ? ((t.note ? t.note + ' · ' : '') + 'revise for Monday') : t.note }));
+        day.moved = day.moved.filter(function (m) { return m.taskId !== id; });
+        day.moved.push({ taskId: id, to: date, spread: true });
+      });
+      if (!d.different) d.different = { studyStart: S.settings.weekendStart, finishLine: S.settings.weekendEnd };
+      await saveDay(d);
+    }
+    day.spread = { sat: w.sat, sun: w.sun };
+    await saveDay(day);
+    toast('Spread over the weekend');
+    render();
+  }
+  async function undoSpread() {
+    const day = S.day;
+    for (const date of [P.addDays(day.date, 1), P.addDays(day.date, 2)]) {
+      const d = getDay(date);
+      if (!d) continue;
+      if (d.locked && d.tasks.some(function (t) { return t.spreadFrom === day.date; })) { toast(niceDate(date) + ' already has a sheet; change it there first'); return; }
+      d.tasks = d.tasks.filter(function (t) { return t.spreadFrom !== day.date; });
+      await saveDay(d);
+    }
+    day.moved = day.moved.filter(function (m) { return !m.spread; });
+    day.spread = null;
+    await saveDay(day);
+    render();
+  }
+
+  // ---------- exam mode ----------
+  const LEVELS = [{ id: 'easy', label: 'Easy' }, { id: 'ok', label: 'OK' }, { id: 'hard', label: 'Hard' }];
+  function examFreeMinutes(day) {
+    const s = daySettings(day);
+    const cap = Math.round((P.toMin(s.finishLine) - P.toMin(s.studyStart)) * 0.8);
+    const ex = excludedIds(day);
+    const used = withMinutes(day.tasks.filter(function (t) { return !ex[t.id] && !t.exam; })).reduce(function (a, t) { return a + t.minutes; }, 0);
+    return Math.max(0, cap - used);
+  }
+  function renderExamCard(day) {
+    const exam = S.exam;
+    const today = exam.papers.filter(function (p) { return p.date === day.date; });
+    const next = exam.papers.filter(function (p) { return p.date > day.date; }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    const added = day.tasks.filter(function (t) { return t.exam; });
+    const plan = P.examPlan(exam, day.date, examFreeMinutes(day));
+    let html = '<div class="card"><span class="step-label">Exam mode</span><h2>' + (next.length ? next.length + ' paper' + (next.length === 1 ? '' : 's') + ' to go' : 'Last paper today') + '</h2>';
+    if (today.length) html += '<p><b>Paper today:</b> ' + today.map(function (p) { return esc(p.subject); }).join(', ') + '. Well done for getting here.</p>';
+    if (next.length) html += '<div class="chips">' + next.slice(0, 6).map(function (p) {
+      const d = P.daysBetween(day.date, p.date);
+      return '<span class="chip" style="cursor:default">' + esc(p.subject) + ' · ' + (d === 1 ? 'tomorrow' : 'in ' + d + ' days') + '</span>';
+    }).join('') + '</div>';
+    if (added.length) {
+      html += '<p class="small">Revision added: ' + added.map(function (t) { return esc(t.subject) + ' ' + t.units + ' min'; }).join(', ') + '</p>' +
+        '<button class="btn small ghost" type="button" data-act="exam-remove">Remove revision</button>';
+    } else if (plan.length) {
+      html += '<p class="small muted">Suggested revision for today (harder and nearer papers get more time):</p><ul class="timeline">' +
+        plan.map(function (x) { return '<li><span class="t">' + x.minutes + 'm</span><span>' + esc(x.subject) + '</span><span class="small muted">' + esc(niceDate(x.date)) + '</span></li>'; }).join('') + '</ul>' +
+        '<button class="btn primary block" type="button" data-act="exam-add">Add revision to today</button>';
+    } else if (next.length) {
+      html += '<p class="small muted">Today is already full; no extra revision fits before the line.</p>';
+    }
+    return html + '</div>';
+  }
+  async function addExamRevision() {
+    const day = S.day;
+    P.examPlan(S.exam, day.date, examFreeMinutes(day)).forEach(function (x) {
+      day.tasks.push({ id: uid(), subject: x.subject, type: 'minutes', units: x.minutes, note: 'Revision for the ' + niceDate(x.date) + ' paper', test: false, dueTomorrow: x.days === 1, override: null, exam: true, paperId: x.paperId });
+    });
+    if (!day.manual) applySuggested(day);
+    await saveDay();
+    render();
+  }
+  function renderExam() {
+    const exam = S.exam || { start: '', papers: [] };
+    const dr = S.examDraft;
+    const papers = exam.papers.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    let html = '<div class="today-hero"><div class="date">Exam date sheet</div><p class="line">Enter it once. On exam days the app plans revision per paper.</p></div>';
+    html += '<div class="card"><h2>Papers</h2>' + (papers.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Subject</th><th>How hard</th><th></th></tr></thead><tbody>' +
+      papers.map(function (p) {
+        return '<tr><td>' + esc(niceDate(p.date)) + '</td><td>' + esc(p.subject) + '</td><td>' + esc((LEVELS.find(function (l) { return l.id === p.level; }) || LEVELS[1]).label) + '</td>' +
+          '<td><button class="btn small ghost" type="button" data-act="exam-del" data-id="' + p.id + '">Remove</button></td></tr>';
+      }).join('') + '</tbody></table></div>' : '<p class="muted">No papers yet.</p>') + '</div>';
+    html += '<form class="card" id="exam-form"><h2>Add a paper</h2><div class="grid-2">' +
+      '<label class="field">Date<input id="exam-date" type="date" required value="' + esc(dr.date) + '"></label>' +
+      '<label class="field">Subject<select id="exam-subject">' + P.SUBJECTS.map(function (sub) { return '<option' + (sub === dr.subject ? ' selected' : '') + '>' + esc(sub) + '</option>'; }).join('') + '</select></label></div>' +
+      '<div class="fb-row"><b>How hard is this paper for you?</b><div class="chips">' + LEVELS.map(function (l) {
+        return '<button class="chip" type="button" data-act="exam-level" data-level="' + l.id + '" aria-pressed="' + (dr.level === l.id) + '">' + l.label + '</button>';
+      }).join('') + '</div></div>' +
+      '<button class="btn primary block" type="submit">Add paper</button></form>';
+    html += '<form class="card" id="exam-start-form"><h2>Exam mode starts</h2><p class="small muted">Usually a few days before the first paper. Leave empty to start on the first paper day.</p>' +
+      '<label class="field">Start date<input id="exam-start" type="date" value="' + esc(exam.start || '') + '"></label>' +
+      '<div class="row"><button class="btn grow" type="submit">Save start date</button>' +
+      (papers.length ? '<button class="btn warn grow" type="button" data-act="exam-clear">Clear date sheet</button>' : '') + '</div></form>';
+    return html;
+  }
+  async function saveExam() { await saveKv('exam'); }
+
   function renderTaskItem(t, i, n, where) {
     const mins = P.estimate(t, S.rates);
     const tags = (t.test ? '<span class="tag test">Test</span>' : '') + (t.dueTomorrow ? '<span class="tag due">Due tomorrow</span>' : '') +
       (where === 'morning' ? '<span class="tag morning">Morning</span>' : '') +
-      (where === 'weekend' ? '<span class="tag morning">Weekend</span>' : '') + (where === 'dropped' ? '<span class="tag test">Dropped</span>' : '');
+      (where === 'weekend' ? '<span class="tag morning">Weekend</span>' : '') + (where === 'dropped' ? '<span class="tag test">Dropped</span>' : '') +
+      (isDateStr(where) ? '<span class="tag morning">' + esc(shortDay(where)) + '</span>' : '') + (t.exam ? '<span class="tag due">Exam revision</span>' : '');
     return '<li class="task" data-id="' + t.id + '">' +
       '<button class="drag-handle" type="button" aria-label="Drag to reorder ' + esc(t.subject) + '">' + ICON.grip + '</button>' +
       '<div class="task-main"><div class="task-title">' + esc(t.subject) + tags + '</div>' +
@@ -512,7 +659,7 @@
       html += '<div class="notice ok"><b>Fits before the line</b><span class="body">' +
         (plan.spareMin ? plan.spareMin + ' min to spare. Free time starts as soon as you finish.' : 'Right on the line.') + '</span></div>';
       const rev = P.revisionSuggestion(plan, s);
-      if (!day.revision && !day.revisionDeclined && rev) {
+      if (!day.revision && !day.revisionDeclined && rev && !P.examActive(S.exam, day.date)) {
         const topics = P.revisionTopics(S.days.filter(function (d) { return d.date < day.date; }), 4);
         html += '<div class="notice info"><b>Light day: add ' + rev + ' min of revision?</b><span class="body">You still finish before the line.</span>' +
           (topics.length ? '<div class="chips">' + topics.map(function (tp, i) {
@@ -545,10 +692,11 @@
           '<button class="btn small" type="button" data-act="move-to" data-to="dropped" data-id="' + low.id + '">Drop it</button></div></div>';
       }
     }
-    if (day.moved.length) {
-      html += '<div class="stack small">' + day.moved.map(function (m) {
+    const plainMoves = day.moved.filter(function (m) { return !m.spread; });
+    if (plainMoves.length) {
+      html += '<div class="stack small">' + plainMoves.map(function (m) {
         const t = day.tasks.find(function (x) { return x.id === m.taskId; });
-        return t ? '<div class="row"><span class="grow">' + esc(t.subject) + ' → ' + (m.to === 'weekend' ? 'weekend' : 'dropped') + '</span>' +
+        return t ? '<div class="row"><span class="grow">' + esc(t.subject) + ' → ' + esc(movedLabel(m.to)) + '</span>' +
           '<button class="btn small ghost" type="button" data-act="unmove" data-id="' + t.id + '">Undo</button></div>' : '';
       }).join('') + '</div>';
     }
@@ -959,6 +1107,9 @@
         return '<span class="' + (rr && rr.before ? 'y' : 'n') + '" title="' + esc(niceDate(d.date)) + '">' + parseDate(d.date).toLocaleDateString('en-GB', { weekday: 'narrow' }) + '</span>';
       }).join('') + '</div><p class="small muted">Green = finished before the line.</p></div>';
     }
+    html += '<div class="card flat"><div class="row"><div class="grow"><h3>Exam date sheet</h3><p class="small muted">' +
+      (S.exam && S.exam.papers.length ? S.exam.papers.length + ' paper' + (S.exam.papers.length === 1 ? '' : 's') + ' entered' : 'Enter it once when exams are announced') + '</p></div>' +
+      '<button class="btn small" type="button" data-act="go" data-view="exam">Open</button></div></div>';
     html += '<div class="card flat"><div class="row"><div class="grow"><h3>My starting times</h3><p class="small muted">How long a page, question or test takes you. The app also learns these.</p></div>' +
       '<button class="btn small" type="button" data-act="go" data-view="rates">Open</button></div></div>';
     return html;
@@ -976,6 +1127,11 @@
     }
     const reasonLabels = {}; P.LATE_REASONS.forEach(function (r) { reasonLabels[r.id] = r.label; });
     let html = '<div class="today-hero"><div class="date">Last 7 days</div><p class="line">' + sum.days + ' school day' + (sum.days === 1 ? '' : 's') + ' with evening ticks</p></div>';
+    const al = P.alerts(S.days.filter(function (d) { return d.date <= S.date; }), S.settings);
+    if (al.length) html += '<div class="notice warn"><b>Needs attention</b>' + al.map(function (a) { return '<span class="body">' + esc(a.text) + '</span>'; }).join('') + '</div>';
+    html += '<div class="card flat"><div class="row"><div class="grow"><h3>Exam date sheet</h3><p class="small muted">' +
+      (S.exam && S.exam.papers.length ? S.exam.papers.length + ' paper' + (S.exam.papers.length === 1 ? '' : 's') + (P.examActive(S.exam, S.date) ? ' · exam mode is on' : '') : 'None entered') + '</p></div>' +
+      '<button class="btn small" type="button" data-act="go" data-view="exam">Open</button></div></div>';
     html += '<div class="stats">' +
       '<div class="stat"><div class="v">' + sum.noMorning + '/' + sum.days + '</div><div class="k">days with no morning catch-up (key result)</div></div>' +
       '<div class="stat"><div class="v">' + sum.beforeLine + '/' + sum.days + '</div><div class="k">finished by the line</div></div>' +
@@ -1305,6 +1461,21 @@
     if (id === 'setup-form') submitSetup(e);
     else if (id === 'restore-form') submitRestore(e);
     else if (id === 'cloud-form') submitCloud(e, false);
+    else if (id === 'exam-form') {
+      e.preventDefault();
+      const date = document.getElementById('exam-date').value;
+      const subject = document.getElementById('exam-subject').value;
+      if (!date) { toast('Pick the paper date'); return; }
+      S.exam = S.exam || { start: '', papers: [] };
+      S.exam.papers.push({ id: uid(), date: date, subject: subject, level: S.examDraft.level });
+      S.examDraft = { date: '', subject: subject, level: 'ok' };
+      saveExam().then(function () { toast('Paper added'); render(); });
+    } else if (id === 'exam-start-form') {
+      e.preventDefault();
+      S.exam = S.exam || { start: '', papers: [] };
+      S.exam.start = document.getElementById('exam-start').value || '';
+      saveExam().then(function () { toast('Saved'); render(); });
+    }
     else if (id === 'task-form') saveTaskModal(e);
     else if (id === 'settings-form') saveSettings(e);
     else if (id === 'pin-form') savePins(e);
@@ -1464,6 +1635,19 @@
         render(); break;
       }
       case 'export': exportBackup(); break;
+      case 'weekend-spread': spreadWeekend(); break;
+      case 'weekend-undo': undoSpread(); break;
+      case 'exam-add': addExamRevision(); break;
+      case 'exam-remove': day.tasks = day.tasks.filter(function (t) { return !t.exam; }); await saveDay(); render(); break;
+      case 'exam-level': {
+        const dEl = document.getElementById('exam-date'), sEl = document.getElementById('exam-subject');
+        S.examDraft = { date: dEl ? dEl.value : '', subject: sEl ? sEl.value : 'Maths', level: el.getAttribute('data-level') };
+        render(); break;
+      }
+      case 'exam-del': S.exam.papers = S.exam.papers.filter(function (p) { return p.id !== el.getAttribute('data-id'); }); await saveExam(); render(); break;
+      case 'exam-clear':
+        confirmBox('Clear the date sheet?', 'All papers are removed and exam mode turns off.', 'Clear', true, async function () { S.exam = { start: '', papers: [] }; await saveExam(); });
+        break;
       case 'cloud-signup': submitCloud(null, true); break;
       case 'cloud-sync': Sync.syncNow().then(function (r) { toast(r.ok ? 'Synced' : 'Not synced: ' + r.reason); render(); }); render(); break;
       case 'cloud-signout':
