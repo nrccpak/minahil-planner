@@ -25,7 +25,7 @@ function cfg_() {
 function rest_(path) {
   var c = cfg_();
   var res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + path, {
-    headers: { apikey: c.key, Authorization: 'Bearer ' + c.key },
+    headers: { apikey: c.key }, // new Supabase secret keys go only in the apikey header
     muteHttpExceptions: true
   });
   if (res.getResponseCode() >= 300) throw new Error('Supabase ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200));
