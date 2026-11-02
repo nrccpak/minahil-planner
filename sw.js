@@ -1,5 +1,5 @@
 /* Offline cache for the app shell. Bump VERSION when files change. */
-const VERSION = 'mh-planner-v5';
+const VERSION = 'mh-planner-v6';
 const SHELL = ['./', 'index.html', 'styles.css', 'planner.js', 'store.js', 'sync.js', 'vendor/supabase.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png'];
 

@@ -444,7 +444,10 @@
       (day.hasPhoto && S.diaryPhoto ? '<img class="photo-thumb" src="' + S.diaryPhoto + '" alt="Today’s diary photo">' : '') +
       '<label class="btn block" for="diary-photo">' + ICON.camera + (day.hasPhoto ? 'Retake photo' : 'Take photo') + '</label>' +
       '<input id="diary-photo" type="file" accept="image/*" capture="environment" hidden>' +
-      '<p class="small muted">Saved with today’s plan. In Phase 2 the app will read the tasks from this photo.</p></div>';
+      (day.hasPhoto ? (cloudReady() ? '<button class="btn primary block" type="button" data-act="read-diary">Read tasks from photo</button>' +
+        '<p class="small muted">You check every task before it is added. Only the homework table is sent.</p>'
+        : '<p class="small muted">To read tasks from the photo automatically, sign in to cloud sync once (Parent tab). Or add them below by hand.</p>')
+        : '<p class="small muted">Then the app reads the tasks for you, or add them below by hand.</p>') + '</div>';
 
     // Step 2: add tasks
     html += '<div class="card"><span class="step-label">Step 2 · Tasks</span><h2>Add each diary task</h2>' +
@@ -746,6 +749,8 @@
     if (S.modal.kind === 'different') return renderDifferentModal();
     if (S.modal.kind === 'confirm') return renderConfirmModal();
     if (S.modal.kind === 'day') return renderDayModal();
+    if (S.modal.kind === 'crop') return renderCropModal();
+    if (S.modal.kind === 'diaryResult') return renderDiaryResult();
     return '';
   }
   function renderTaskModal() {
@@ -1032,7 +1037,9 @@
       '<label class="field">What was hard today? <span class="hint">Optional, one line</span><input id="fb-hard" type="text" dir="auto" maxlength="120" value="' + esc(f.hardNote) + '"></label>' +
       '<label class="btn block" for="sheet-photo">' + ICON.camera + (day.hasSheetPhoto ? 'Retake photo of ticked sheet' : 'Photo of ticked sheet (optional)') + '</label>' +
       '<input id="sheet-photo" type="file" accept="image/*" capture="environment" hidden>' +
-      '<p class="small muted">The photo is kept so Phase 2 can learn to read your sheets.</p>' +
+      (day.hasSheetPhoto && cloudReady() ? '<button class="btn block" type="button" data-act="read-sheet" data-date="' + day.date + '">Fill ticks from the photo</button>' : '') +
+      (S.sheetWarn && S.sheetWarn.date === day.date ? '<div class="notice warn"><b>Check the sheet</b><span class="body">' + esc(S.sheetWarn.text) + '</span></div>' : '') +
+      '<p class="small muted">' + (cloudReady() ? 'Take a photo of the ticked sheet, then tap Fill ticks. Check the ticks before saving.' : 'Tick on screen. With cloud sync on, the app can also read the ticks from a photo.') + '</p>' +
       '<button class="btn primary block" type="button" data-act="fb-save" data-date="' + day.date + '">Save evening ticks</button></div>';
     return html;
   }
@@ -1058,9 +1065,17 @@
       S.subjectScore = P.learnOrder(ids, ids, day.tasks, f, S.subjectScore);
       day.learned = true; day.learnChanges = changes;
       await Promise.all([saveKv('rates'), saveKv('samples'), saveKv('subjectScore')]);
+      const ad = P.adaptBlock(S.days, S.settings, S.meta.blockAdjustedAt, day.date);
+      if (ad) {
+        S.meta.blockNote = { date: day.date, from: S.settings.blockMin, to: ad.blockMin, reason: ad.reason };
+        S.settings.blockMin = ad.blockMin; S.meta.blockAdjustedAt = day.date;
+        await Promise.all([saveKv('settings'), saveKv('meta')]);
+      }
     }
+    day.tip = { text: P.tipFromDay(day, S.settings), source: 'rules' };
     await saveDay(day);
     toast('Saved. Well done!');
+    fetchTip(day);
     S.view = S.role === 'parent' ? 'parent' : 'me';
     S.fbDate = null;
     render();
@@ -1092,6 +1107,14 @@
     const st = streakInfo();
     let html = '<div class="today-hero"><div class="date">My day</div><p class="line">' +
       (st.streak ? '<span class="hl">' + st.streak + ' day' + (st.streak > 1 ? 's' : '') + ' finished before the line</span>' : 'Finish before the line to start a streak.') + '</p></div>';
+    const lastSaved = S.days.slice().reverse().find(function (d) { return d.feedback && d.feedback.saved; });
+    if (lastSaved) {
+      const tip = (lastSaved.tip && lastSaved.tip.text) || P.tipFromDay(lastSaved, S.settings);
+      if (tip) html += '<div class="notice info"><b>Tip for ' + (lastSaved.date === S.date ? 'tomorrow' : 'today') + '</b><span class="body">' + esc(tip) + '</span></div>';
+    }
+    if (S.meta.blockNote && P.daysBetween(S.meta.blockNote.date, S.date) <= 7) {
+      html += '<div class="notice ok"><b>Study blocks are now ' + S.meta.blockNote.to + ' min</b><span class="body">Because ' + esc(S.meta.blockNote.reason) + '.</span></div>';
+    }
     if (r) {
       html += '<div class="stats">' +
         '<div class="stat"><div class="v">' + r.done + '/' + r.total + '</div><div class="k">tasks done</div></div>' +
@@ -1161,6 +1184,8 @@
     const learned = Object.keys(S.rates).map(function (sub) {
       return Object.keys(S.rates[sub]).map(function (t) { return '<tr><td>' + esc(sub) + '</td><td>' + esc(P.TASK_TYPES[t] ? P.TASK_TYPES[t].unit : t) + '</td><td class="n">' + (Math.round(S.rates[sub][t] * 10) / 10) + '</td><td class="n">' + ((S.samples[sub + '|' + t] || []).length) + '</td></tr>'; }).join('');
     }).join('');
+    html += '<div class="card flat"><h3>Study block length: ' + S.settings.blockMin + ' min</h3><p class="small muted">' +
+      (S.meta.blockNote ? 'Changed ' + esc(niceDate(S.meta.blockNote.date)) + ' from ' + S.meta.blockNote.from + ' to ' + S.meta.blockNote.to + ' min because ' + esc(S.meta.blockNote.reason) + '.' : 'Adjusts by itself at most once a week: +5 min when focus is mostly Good, −5 min when it is often Poor (range 20–45).') + '</p></div>';
     html += '<div class="card"><div class="section-head"><h2>Times per unit</h2><button class="btn small" type="button" data-act="go" data-view="rates">Edit</button></div>' +
       (learned ? '<div class="table-wrap"><table class="data"><thead><tr><th>Subject</th><th>Per</th><th class="n">Min</th><th class="n">Days learned</th></tr></thead><tbody>' + learned + '</tbody></table></div>' : '<p class="muted">Using the default guesses.</p>') + '</div>';
 
@@ -1384,6 +1409,199 @@
     } catch (e) { toast(e.message); }
   }
 
+  // ---------- Phase 2: reading photos ----------
+  function cloudReady() { return !!(window.Sync && Sync.user()); }
+  async function openCrop(purpose, date) {
+    const key = date + ':' + (purpose === 'diary' ? 'diary' : 'sheet');
+    const img = await photoLocalOrCloud(key);
+    if (!img) { toast('Take the photo first'); return; }
+    const saved = S.meta['crop_' + purpose];
+    S.modal = { kind: 'crop', purpose: purpose, date: date, img: img, rect: saved ? Object.assign({}, saved) : { x: 0.03, y: 0.03, w: 0.94, h: 0.94 }, busy: false, error: '' };
+    render();
+  }
+  function renderCropModal() {
+    const m = S.modal, r = m.rect;
+    const pct = function (v) { return (v * 100).toFixed(2) + '%'; };
+    return '<div class="overlay"><div class="sheet-modal" role="dialog" aria-modal="true" aria-labelledby="crop-h">' +
+      '<div class="section-head"><h2 id="crop-h">' + (m.purpose === 'diary' ? 'Select the homework table' : 'Select the ticked sheet') + '</h2>' +
+      '<button class="btn small ghost" type="button" data-act="modal-close"' + (m.busy ? ' disabled' : '') + '>Cancel</button></div>' +
+      '<p class="small muted">Drag the box or its corners so only the ' + (m.purpose === 'diary' ? 'homework rows are' : 'sheet is') + ' inside. ' +
+      (m.purpose === 'diary' ? 'Leave out her name and the school name; only the part inside the box is sent.' : 'Include the code at the top.') + ' The app remembers this box for next time.</p>' +
+      '<div class="crop-wrap" id="crop-wrap"><img src="' + m.img + '" alt="Photo to read" draggable="false">' +
+      '<div class="crop-rect" id="crop-rect" style="left:' + pct(r.x) + ';top:' + pct(r.y) + ';width:' + pct(r.w) + ';height:' + pct(r.h) + '">' +
+      ['tl', 'tr', 'bl', 'br'].map(function (h) { return '<span class="crop-h ' + h + '" data-h="' + h + '"></span>'; }).join('') + '</div></div>' +
+      (m.error ? '<div class="notice warn"><b>Could not read the photo</b><span class="body">' + esc(m.error) + '</span></div>' : '') +
+      '<div class="row"><button class="btn primary grow" type="button" data-act="crop-go"' + (m.busy ? ' disabled' : '') + '>' +
+      (m.busy ? 'Reading… about 10 seconds' : (m.purpose === 'diary' ? 'Read tasks' : 'Read ticks')) + '</button>' +
+      '<button class="btn" type="button" data-act="crop-full"' + (m.busy ? ' disabled' : '') + '>Whole photo</button></div></div></div>';
+  }
+  let cropDrag = null;
+  function startCropDrag(e) {
+    const wrap = document.getElementById('crop-wrap');
+    if (!wrap || !S.modal || S.modal.kind !== 'crop' || S.modal.busy) return;
+    const h = e.target.closest('.crop-h');
+    const box = wrap.getBoundingClientRect();
+    cropDrag = { mode: h ? h.getAttribute('data-h') : 'move', x0: e.clientX, y0: e.clientY, r0: Object.assign({}, S.modal.rect), W: box.width, H: box.height };
+    e.preventDefault();
+    try { e.target.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
+  }
+  function moveCropDrag(e) {
+    const d = cropDrag, r0 = d.r0;
+    const dx = (e.clientX - d.x0) / d.W, dy = (e.clientY - d.y0) / d.H;
+    const min = 0.1;
+    let x = r0.x, y = r0.y, w = r0.w, h = r0.h;
+    if (d.mode === 'move') { x = Math.min(1 - w, Math.max(0, r0.x + dx)); y = Math.min(1 - h, Math.max(0, r0.y + dy)); }
+    else {
+      if (d.mode.indexOf('l') >= 0) { x = Math.min(r0.x + r0.w - min, Math.max(0, r0.x + dx)); w = r0.x + r0.w - x; }
+      if (d.mode.indexOf('r') >= 0) { w = Math.min(1 - r0.x, Math.max(min, r0.w + dx)); }
+      if (d.mode.indexOf('t') >= 0) { y = Math.min(r0.y + r0.h - min, Math.max(0, r0.y + dy)); h = r0.y + r0.h - y; }
+      if (d.mode.indexOf('b') >= 0) { h = Math.min(1 - r0.y, Math.max(min, r0.h + dy)); }
+    }
+    S.modal.rect = { x: x, y: y, w: w, h: h };
+    const el = document.getElementById('crop-rect');
+    if (el) { el.style.left = (x * 100) + '%'; el.style.top = (y * 100) + '%'; el.style.width = (w * 100) + '%'; el.style.height = (h * 100) + '%'; }
+  }
+  function cropImage(dataUrl, rect, maxSide) {
+    return new Promise(function (resolve, reject) {
+      const img = new Image();
+      img.onload = function () {
+        const sx = Math.round(rect.x * img.naturalWidth), sy = Math.round(rect.y * img.naturalHeight);
+        const sw = Math.max(1, Math.round(rect.w * img.naturalWidth)), sh = Math.max(1, Math.round(rect.h * img.naturalHeight));
+        const k = Math.min(1, maxSide / Math.max(sw, sh));
+        const c = document.createElement('canvas');
+        c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+        c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      };
+      img.onerror = function () { reject(new Error('Could not open the photo')); };
+      img.src = dataUrl;
+    });
+  }
+  function sheetTasks(day) {
+    const ex = excludedIds(day);
+    return day.tasks.filter(function (t) { return !ex[t.id] || ex[t.id] === 'morning'; });
+  }
+  async function runCrop(full) {
+    const m = S.modal;
+    if (full) m.rect = { x: 0, y: 0, w: 1, h: 1 };
+    else { S.meta['crop_' + m.purpose] = Object.assign({}, m.rect); saveKv('meta'); }
+    m.busy = true; m.error = ''; render();
+    try {
+      const image = await cropImage(m.img, m.rect, 1600);
+      if (m.purpose === 'diary') {
+        const data = await Sync.callFunction('read-photo', { mode: 'diary', image: image, mime: 'image/jpeg', subjects: P.SUBJECTS });
+        const rows = (data && data.result && data.result.rows) || [];
+        const day = getDay(m.date) || S.day;
+        day.diaryRead = { rows: rows, model: data.model, at: new Date().toISOString() };
+        await saveDay(day);
+        if (!rows.length) { m.busy = false; m.error = 'No homework was found in the box. Move the box over the homework rows, or add the tasks by hand.'; return render(); }
+        S.modal = { kind: 'diaryResult', date: m.date, model: data.model, rows: rows.map(function (r) {
+          const dup = day.tasks.some(function (t) { return t.subject === r.subject && (t.note || '') === (r.text || ''); });
+          return Object.assign({}, r, { include: !dup, dup: dup, units: r.type === 'test' ? 1 : Math.max(1, Number(r.units) || 1) });
+        }) };
+        render();
+      } else {
+        const day = getDay(m.date);
+        const list = sheetTasks(day);
+        const data = await Sync.callFunction('read-photo', { mode: 'sheet', image: image, mime: 'image/jpeg', dateCode: dateCode(day.date),
+          tasks: list.map(function (t, i) { return { n: i + 1, subject: t.subject, kind: typeLabel(t) }; }) });
+        applySheetReading(day, list, data.result || {}, data.model);
+        S.modal = null;
+        await saveDay(day);
+        toast('Ticks filled from the photo. Check them, then Save.');
+        render();
+      }
+    } catch (err) {
+      if (S.modal && S.modal.kind === 'crop') { S.modal.busy = false; S.modal.error = err.message; render(); }
+      else toast(err.message);
+    }
+  }
+  function applySheetReading(day, list, res, model) {
+    const f = ensureFeedback(day);
+    (res.tasks || []).forEach(function (r) {
+      const t = list[(r.n || 0) - 1];
+      if (!t) return;
+      const tf = f.tasks[t.id] || (f.tasks[t.id] = {});
+      ['status', 'time', 'difficulty', 'focus'].forEach(function (k) { if (r[k] && r[k] !== 'none') tf[k] = r[k]; });
+      tf.reasons = (r.reasons || []).slice();
+      tf.help = !!r.help;
+    });
+    if (res.start) { const v = P.handTime(res.start, 'start'); if (v) f.start = v; }
+    if (res.finish) { const v = P.handTime(res.finish, 'finish'); if (v) f.finish = v; }
+    if (res.sleep) { const v = P.handTime(res.sleep, 'sleep'); if (v) f.sleep = v; }
+    if (typeof res.freeTaken === 'boolean') f.freeTaken = res.freeTaken;
+    if (res.tvBoxes != null) f.tvBoxes = Math.max(0, Math.min(8, Number(res.tvBoxes) || 0));
+    if (res.hardNote) f.hardNote = String(res.hardNote).slice(0, 120);
+    day.sheetRead = { result: res, model: model, at: new Date().toISOString() };
+    const seen = String(res.dateCode || '').replace(/\s/g, '').toUpperCase();
+    S.sheetWarn = seen && seen !== dateCode(day.date) ? { date: day.date, text: 'The photo shows sheet ' + seen + ' but this is ' + dateCode(day.date) + '. Check it is the right day’s sheet.' } : null;
+  }
+  function renderDiaryResult() {
+    const m = S.modal;
+    const n = m.rows.filter(function (r) { return r.include; }).length;
+    const typeOpts = Object.keys(P.TASK_TYPES);
+    return '<div class="overlay"><div class="sheet-modal" role="dialog" aria-modal="true" aria-labelledby="rr-h">' +
+      '<div class="section-head"><h2 id="rr-h">Check the tasks</h2><button class="btn small ghost" type="button" data-act="modal-close">Cancel</button></div>' +
+      '<p class="small muted">Fix anything the app misread, and untick rows you don’t want. Rows marked “check” were hard to read.</p>' +
+      m.rows.map(function (r, i) {
+        return '<div class="fb-task' + (r.include ? '' : ' off') + '">' +
+          '<div class="row"><button class="chip" type="button" data-act="rr-toggle" data-i="' + i + '" aria-pressed="' + !!r.include + '">' + (r.include ? 'Add' : 'Skip') + '</button>' +
+          '<select id="rr-sub-' + i + '" class="grow" aria-label="Subject">' + P.SUBJECTS.map(function (sub) { return '<option' + (sub === r.subject ? ' selected' : '') + '>' + esc(sub) + '</option>'; }).join('') + '</select>' +
+          (r.confidence === 'low' ? '<span class="tag due">check</span>' : '') + (r.dup ? '<span class="tag morning">already added</span>' : '') + '</div>' +
+          '<input id="rr-text-' + i + '" type="text" dir="auto" class="' + (isUrdu(r.text) ? 'urdu' : '') + '" value="' + esc(r.text) + '" aria-label="What the diary says">' +
+          '<div class="row"><select id="rr-type-' + i + '" aria-label="Kind of work" style="width:auto">' + typeOpts.map(function (k) { return '<option value="' + k + '"' + (k === r.type ? ' selected' : '') + '>' + P.TASK_TYPES[k].label + '</option>'; }).join('') + '</select>' +
+          '<input id="rr-units-' + i + '" type="number" inputmode="numeric" min="1" max="300" value="' + esc(r.units) + '" aria-label="How many" style="width:80px">' +
+          '<button class="chip flag" type="button" data-act="rr-flag" data-i="' + i + '" data-f="test" aria-pressed="' + !!r.test + '">Test</button>' +
+          '<button class="chip flag" type="button" data-act="rr-flag" data-i="' + i + '" data-f="dueTomorrow" aria-pressed="' + !!r.dueTomorrow + '">Due tomorrow</button></div></div>';
+      }).join('') +
+      '<button class="btn primary block" type="button" data-act="rr-add"' + (n ? '' : ' disabled') + '>Add ' + n + ' task' + (n === 1 ? '' : 's') + '</button></div></div>';
+  }
+  function readDiaryResultInputs() {
+    S.modal.rows.forEach(function (r, i) {
+      const g = function (id) { return document.getElementById(id + i); };
+      if (g('rr-sub-')) r.subject = g('rr-sub-').value;
+      if (g('rr-text-')) r.text = g('rr-text-').value.trim();
+      if (g('rr-type-')) r.type = g('rr-type-').value;
+      if (g('rr-units-')) r.units = Math.max(1, Number(g('rr-units-').value) || 1);
+    });
+  }
+  async function addDiaryRows() {
+    readDiaryResultInputs();
+    const day = getDay(S.modal.date) || S.day;
+    let n = 0;
+    S.modal.rows.forEach(function (r) {
+      if (!r.include) return;
+      day.tasks.push({ id: uid(), subject: r.subject, type: r.type, units: r.type === 'test' ? 1 : r.units, note: r.text, test: !!r.test || r.type === 'test',
+        dueTomorrow: !!r.dueTomorrow, override: null, fromPhoto: true });
+      n += 1;
+    });
+    if (!day.manual) applySuggested(day);
+    S.modal = null;
+    await saveDay(day);
+    toast(n + ' task' + (n === 1 ? '' : 's') + ' added. Check the order and times.');
+    render();
+  }
+  function tipContext(day) {
+    const f = day.feedback, s = daySettings(day);
+    const lines = ['Finish line ' + hm(s.finishLine) + ', she finished at ' + (f.finish ? hm(f.finish) : 'unknown') + '.'];
+    day.tasks.forEach(function (t) {
+      const tf = f.tasks[t.id]; if (!tf) return;
+      const lab = function (list, id) { const o = list.find(function (x) { return x.id === id; }); return o ? o.label : '-'; };
+      lines.push(t.subject + ': ' + lab(P.STATUS, tf.status) + ', time ' + lab(P.TIME_BUCKETS, tf.time) + ', focus ' + lab(P.FOCUS, tf.focus) +
+        ((tf.reasons || []).length ? ', late because ' + tf.reasons.map(function (r) { return lab(P.LATE_REASONS, r); }).join(' and ') : '') + (tf.help ? ', needs help' : ''));
+    });
+    if (f.hardNote) lines.push('She wrote that this was hard: ' + f.hardNote);
+    lines.push('Days in a row finished before the line: ' + streakInfo().streak + '.');
+    return lines.join('\n');
+  }
+  function fetchTip(day) {
+    if (!cloudReady()) return;
+    Sync.callFunction('read-photo', { mode: 'tip', context: tipContext(day) }).then(function (d) {
+      const tip = d && d.result && d.result.tip;
+      if (tip) { day.tip = { text: String(tip).slice(0, 200), source: 'gemini' }; saveDay(day).then(softRender); }
+    }).catch(function () { /* the plain-code tip stays */ });
+  }
+
   // ---------- toast ----------
   let toastTimer = null;
   function toast(msg) {
@@ -1449,12 +1667,13 @@
 
   // ---------- events ----------
   document.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('#crop-rect')) { startCropDrag(e); return; }
     const h = e.target.closest('.drag-handle');
     if (h && S.day && !S.day.locked) startDrag(e, h);
   });
-  document.addEventListener('pointermove', function (e) { if (drag) moveDrag(e); });
-  document.addEventListener('pointerup', function () { if (drag) endDrag(); });
-  document.addEventListener('pointercancel', function () { if (drag) endDrag(); });
+  document.addEventListener('pointermove', function (e) { if (drag) moveDrag(e); else if (cropDrag) moveCropDrag(e); });
+  document.addEventListener('pointerup', function () { if (drag) endDrag(); cropDrag = null; });
+  document.addEventListener('pointercancel', function () { if (drag) endDrag(); cropDrag = null; });
 
   document.addEventListener('submit', function (e) {
     const id = e.target.id;
@@ -1521,7 +1740,7 @@
     if (!el) return;
     const act = el.getAttribute('data-act');
     S.lastActive = Date.now();
-    if (act === 'modal-bg') { if (e.target === el) { S.modal = null; render(); } return; }
+    if (act === 'modal-bg') { if (e.target === el && S.modal && S.modal.kind !== 'crop' && S.modal.kind !== 'diaryResult') { S.modal = null; render(); } return; }
     const day = S.day;
     switch (act) {
       case 'pin-who': S.pin = { who: el.getAttribute('data-who') || null, entered: '', error: '' }; render(); break;
@@ -1635,6 +1854,13 @@
         render(); break;
       }
       case 'export': exportBackup(); break;
+      case 'read-diary': openCrop('diary', S.day.date); break;
+      case 'read-sheet': openCrop('sheet', el.getAttribute('data-date')); break;
+      case 'crop-go': runCrop(false); break;
+      case 'crop-full': runCrop(true); break;
+      case 'rr-toggle': readDiaryResultInputs(); { const r = S.modal.rows[Number(el.getAttribute('data-i'))]; r.include = !r.include; } render(); break;
+      case 'rr-flag': readDiaryResultInputs(); { const r = S.modal.rows[Number(el.getAttribute('data-i'))]; const f = el.getAttribute('data-f'); r[f] = !r[f]; } render(); break;
+      case 'rr-add': addDiaryRows(); break;
       case 'weekend-spread': spreadWeekend(); break;
       case 'weekend-undo': undoSpread(); break;
       case 'exam-add': addExamRevision(); break;

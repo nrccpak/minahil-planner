@@ -517,6 +517,72 @@
     return out;
   }
 
+
+  // ---------- Phase 3: adaptive study blocks ----------
+  /**
+   * Once a week at most: focus mostly "Good" → block +5 min (up to 45); often "Poor" → −5 min (down to 20).
+   * Needs at least 5 school days with ticks in the last 7 days. Returns {blockMin, reason} or null.
+   */
+  function adaptBlock(days, settings, lastAdjust, today) {
+    const s = Object.assign({}, DEFAULT_SETTINGS, settings || {});
+    if (lastAdjust && daysBetween(lastAdjust, today) < 7) return null;
+    const from = addDays(today, -6);
+    const recent = days.filter(function (d) { return d.date >= from && d.date <= today && !d.pause && d.feedback && d.feedback.saved; });
+    if (recent.length < 5) return null;
+    const c = { good: 0, average: 0, poor: 0 };
+    recent.forEach(function (d) {
+      (d.tasks || []).forEach(function (t) {
+        const fb = d.feedback.tasks && d.feedback.tasks[t.id];
+        if (fb && c[fb.focus] != null) c[fb.focus] += 1;
+      });
+    });
+    const n = c.good + c.average + c.poor;
+    if (n < 5) return null;
+    const cur = Number(s.blockMin) || 30;
+    if (c.good / n >= 0.7 && cur < 45) return { blockMin: Math.min(45, cur + 5), reason: 'focus was mostly Good (' + c.good + ' of ' + n + ')' };
+    if (c.poor / n >= 0.3 && cur > 20) return { blockMin: Math.max(20, cur - 5), reason: 'focus was often Poor (' + c.poor + ' of ' + n + ')' };
+    return null;
+  }
+
+  // ---------- Phase 3: daily tip (plain-code fallback) ----------
+  function tipFromDay(day, settings) {
+    const s = Object.assign({}, DEFAULT_SETTINGS, settings || {});
+    const f = day && day.feedback;
+    if (!f || !f.saved) return '';
+    const line = toMin((day.different && day.different.finishLine) || s.finishLine);
+    const fin = toMin(f.finish);
+    const reasons = {};
+    let help = '', poorLast = '';
+    (day.tasks || []).forEach(function (t, i) {
+      const fb = f.tasks && f.tasks[t.id];
+      if (!fb) return;
+      (fb.reasons || []).forEach(function (r) { reasons[r] = (reasons[r] || 0) + 1; });
+      if (fb.help && !help) help = t.subject;
+      if (fb.focus === 'poor' && i >= (day.tasks.length - 2)) poorLast = t.subject;
+    });
+    const top = Object.keys(reasons).sort(function (a, b) { return reasons[b] - reasons[a]; })[0];
+    if (help) return 'Ask for help with ' + help + ' before you start tomorrow, so it does not slow the rest down.';
+    if (top === 'distracted') return 'Keep the phone and TV out of the room during study blocks tomorrow.';
+    if (top === 'breaklong') return 'Use the desk timer for breaks too — start the next block when it rings.';
+    if (top === 'tired') return 'Try your hardest subject first tomorrow, while you are fresh.';
+    if (top === 'understand') return 'Mark the parts you did not understand and ask your teacher tomorrow.';
+    if (poorLast) return 'Your focus dropped at the end. Try moving ' + poorLast + ' earlier tomorrow.';
+    if (!isNaN(fin) && fin <= line) return 'You finished before the line — keep the same order tomorrow.';
+    if (!isNaN(fin) && fin > line) return 'Start right at ' + to12h(toMin(s.studyStart)) + ' tomorrow; a 10-minute earlier start often means finishing on time.';
+    return 'Same plan tomorrow: one task at a time, timer on.';
+  }
+
+  /** Handwritten time from the sheet ("3:35", "7.10", "10") → "HH:MM" (afternoon/evening for start and finish; night for sleep). */
+  function handTime(str, kind) {
+    const m = /(\d{1,2})\s*[:.\s]?\s*(\d{2})?/.exec(String(str || ''));
+    if (!m) return '';
+    let h = Number(m[1]); const mm = m[2] ? Number(m[2]) : 0;
+    if (h > 23 || mm > 59) return '';
+    if (kind === 'sleep') { if (h >= 6 && h <= 11) h += 12; else if (h === 12) h = 0; }
+    else if (h >= 1 && h <= 11) h += 12;
+    return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+  }
+
   const api = {
     SUBJECTS: SUBJECTS, TASK_TYPES: TASK_TYPES, DEFAULT_RATES: DEFAULT_RATES, RATE_TYPES: RATE_TYPES, DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     TIME_BUCKETS: TIME_BUCKETS, STATUS: STATUS, DIFFICULTY: DIFFICULTY, FOCUS: FOCUS, LATE_REASONS: LATE_REASONS,
@@ -525,7 +591,8 @@
     revisionSuggestion: revisionSuggestion, morningPlan: morningPlan, lowestPriority: lowestPriority,
     skipReason: skipReason, learnFromDay: learnFromDay, learnOrder: learnOrder, sameOrder: sameOrder,
     summarize: summarize, revisionTopics: revisionTopics, guessUnits: guessUnits, bucketDelta: bucketDelta,
-    addDays: addDays, weekdayOf: weekdayOf, weekendSplit: weekendSplit, examActive: examActive, examPlan: examPlan, alerts: alerts, daysBetween: daysBetween
+    addDays: addDays, weekdayOf: weekdayOf, weekendSplit: weekendSplit, examActive: examActive, examPlan: examPlan, alerts: alerts, daysBetween: daysBetween,
+    adaptBlock: adaptBlock, tipFromDay: tipFromDay, handTime: handTime
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Planner = api;

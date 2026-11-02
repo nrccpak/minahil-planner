@@ -210,4 +210,31 @@ t('alerts: 3 days late, repeated "didn\'t understand", frequent morning catch-up
   assert.equal(ok.length, 0);
 });
 
+
+t('adaptive blocks: +5 when focus mostly good, -5 when often poor, at most weekly, needs 5 days', () => {
+  const mk = (date, focus) => ({ date, tasks: [{ id: 'a', subject: 'Maths' }, { id: 'b', subject: 'Art' }],
+    feedback: { saved: true, tasks: { a: { focus }, b: { focus } } } });
+  const good = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'].map(d => mk(d, 'good'));
+  assert.deepEqual(P.adaptBlock(good, S, null, '2026-11-06').blockMin, 35);
+  assert.equal(P.adaptBlock(good, S, '2026-11-02', '2026-11-06'), null);        // adjusted 4 days ago
+  assert.equal(P.adaptBlock(good.slice(0, 4), S, null, '2026-11-06'), null);    // only 4 days
+  const poor = good.map(d => mk(d.date, 'poor'));
+  assert.equal(P.adaptBlock(poor, S, null, '2026-11-06').blockMin, 25);
+  assert.equal(P.adaptBlock(good, Object.assign({}, S, { blockMin: 45 }), null, '2026-11-06'), null);
+});
+
+t('daily tip fallback and handwritten times', () => {
+  const day = { date: 'x', tasks: [{ id: 'a', subject: 'Maths' }], feedback: { saved: true, finish: '19:10', tasks: { a: { reasons: ['distracted'] } } } };
+  assert.ok(/phone/i.test(P.tipFromDay(day, S)));
+  day.feedback.tasks.a = { help: true };
+  assert.ok(/Maths/.test(P.tipFromDay(day, S)));
+  day.feedback.tasks.a = {};
+  assert.ok(/before the line/.test(P.tipFromDay(day, S)));
+  assert.equal(P.handTime('3:35', 'start'), '15:35');
+  assert.equal(P.handTime('7.10', 'finish'), '19:10');
+  assert.equal(P.handTime('10:20', 'sleep'), '22:20');
+  assert.equal(P.handTime('12:15', 'sleep'), '00:15');
+  assert.equal(P.handTime('', 'sleep'), '');
+});
+
 console.log(`\nAll ${n} tests passed.`);

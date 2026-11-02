@@ -185,6 +185,21 @@
     } catch (e) { return null; }
   }
 
+
+  /** Call a Supabase Edge Function as the signed-in family account. */
+  async function callFunction(name, body) {
+    if (!client || !user) throw new Error('Sign in to cloud sync first (Parent tab → Cloud sync).');
+    if (!navigator.onLine) throw new Error('No internet connection. Add the tasks by hand, or try again when online.');
+    const r = await client.functions.invoke(name, { body: body });
+    if (r.error) {
+      let msg = r.error.message || 'The photo could not be read.';
+      try { const ctx = r.error.context; if (ctx && typeof ctx.json === 'function') { const j = await ctx.json(); if (j && j.error) msg = j.error; } } catch (e) { /* keep msg */ }
+      if (/429|quota|rate/i.test(msg)) msg = 'The free reading limit is used up for now. Add the tasks by hand, or try again later.';
+      throw new Error(msg);
+    }
+    return r.data;
+  }
+
   async function signIn(email, password) {
     if (!client) throw new Error('Cloud sync is not available in this browser.');
     const r = await client.auth.signInWithPassword({ email: email, password: password });
@@ -223,7 +238,7 @@
 
   root.Sync = {
     init: init, syncNow: syncNow, schedule: schedule, queuePhoto: queuePhoto, downloadPhoto: downloadPhoto,
-    signIn: signIn, signUp: signUp, signOut: signOut,
+    signIn: signIn, signUp: signUp, signOut: signOut, callFunction: callFunction,
     status: status,
     user: function () { return user; },
     available: available,
