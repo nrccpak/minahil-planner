@@ -53,9 +53,18 @@ Homework diary planner for Minahil. Plan at 3:20, study on paper 3:30–7:30, ti
 | `supabase/schema.sql` | Ready-made tables, row security and private photo bucket for cloud sync |
 | `tests/planner.test.js` | 15 unit tests (`node tests/planner.test.js`) |
 
+## Cloud sync (Supabase, family account)
+
+- A separate family Supabase project (free plan, Singapore) with tables `app_kv` and `days` under row-level security, and a private `photos` bucket.
+- The phone stays the main copy and works offline. When signed in, every save is copied up within a few seconds; changes from another phone come down when the app opens. Newest save wins per day.
+- First phone: Parent → Cloud sync → Create account → confirm the email → Sign in.
+- Another phone: open the app link → "Restore from the cloud" → sign in. PINs, days, learned times and photos come across.
+- "Delete everything" clears only that phone and signs it out; the cloud copy stays.
+- Files: `sync.js`, `vendor/supabase.js` (supabase-js 2.118.0, bundled for offline use), `supabase/schema.sql`.
+
 ## Next steps
 
-- **Supabase sync** (still Phase 1 scope in the concept): create a free Supabase project, run `supabase/schema.sql`, then add sync + parent email login. Not done yet because creating the project needs your account.
+- **Supabase sync**: done (see above).
 - **Phase 2**: Gemini reads the diary photo and the ticked sheet (via a Supabase function, key never on the phone), tuned on the photos collected in Phase 1.
 - **Phase 3**: adaptive block length, daily tip.
 - **Phase 4**: Sunday email, alerts, full weekend mode, Exam mode, app notifications.
