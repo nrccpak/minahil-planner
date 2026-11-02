@@ -166,7 +166,6 @@
     if (!S.ready) { $app.innerHTML = '<main><p class="muted">Loading…</p></main>'; return; }
     if (!S.pins) { $app.innerHTML = renderSetup(); return; }
     if (!S.role) { $app.innerHTML = renderLock(); return; }
-    if (S.role === 'kid' && !S.meta.ratesSet && S.view !== 'rates') S.view = 'rates-intro';
     let body = '';
     switch (S.view) {
       case 'rates-intro': body = renderRatesIntro(); break;
@@ -288,14 +287,14 @@
     const show = v ? Math.round(v * 10) / 10 : '';
     return '<td class="n"><input class="rate-input" type="number" inputmode="decimal" min="0.5" max="120" step="0.5" ' +
       'id="rate-' + subject.replace(/[^a-z0-9]/gi, '') + '-' + type + '" data-rate-subject="' + esc(subject) + '" data-rate-type="' + type + '" ' +
-      'value="' + show + '" placeholder="' + P.TASK_TYPES[type].defaultRate + '" aria-label="' + esc(subject) + ' minutes per ' + P.TASK_TYPES[type].unit + '"></td>';
+      'value="' + show + '" placeholder="' + P.rateFor({}, subject, type) + '" aria-label="' + esc(subject) + ' minutes per ' + P.TASK_TYPES[type].unit + '"></td>';
   }
   function renderRates() {
     const rows = P.SUBJECTS.map(function (s) {
       return '<tr><th scope="row">' + esc(s) + '</th>' + P.RATE_TYPES.map(function (t) { return rateCell(s, t); }).join('') + '</tr>';
     }).join('');
     return '<div class="card"><div class="section-head"><h2>Starting times</h2><span class="small muted">minutes each</span></div>' +
-      '<p class="small muted">Empty boxes use the grey guess. After each evening’s ticks the app adjusts these by itself (never more than about 10 minutes a day).</p>' +
+      '<p class="small muted">Grey numbers are already set for you; type only where you know better. After each evening’s ticks the app adjusts these by itself (never more than about 10 minutes a day).</p>' +
       '<div class="table-wrap"><table class="data"><thead><tr><th>Subject</th><th class="n">Page</th><th class="n">Question</th><th class="n">Verse</th><th class="n">Test</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div>' +
       '<button class="btn primary block" type="button" data-act="rates-save">Save starting times</button></div>';

@@ -25,8 +25,8 @@
     studyStart: '15:30',
     finishLine: '19:30',
     feedbackTime: '19:30',
-    bedtime: '22:00',
-    schoolWake: '06:30',
+    bedtime: '22:30',
+    schoolWake: '05:30',
     earliestWake: '05:00',
     blockMin: 30,
     breakMin: 5,
@@ -34,6 +34,23 @@
     blocksBeforeLong: 3,
     bufferPct: 12,
     revisionMin: 30
+  };
+
+  // Starting minutes for a 9th-class student (per page / question / verse / test).
+  // Used until her own ticks teach better numbers; anything she sets herself wins.
+  const DEFAULT_RATES = {
+    'English-R':       { pages: 8,  questions: 5, test: 30 },
+    'English-W':       { pages: 15, questions: 6, test: 30 },
+    'Urdu-R':          { pages: 8,  questions: 5, test: 30 },
+    'Urdu-W':          { pages: 15, questions: 6, test: 30 },
+    'Maths':           { pages: 15, questions: 6, test: 40 },
+    'Gen. Science':    { pages: 12, questions: 6, test: 40 },
+    'Soc. Studies':    { pages: 10, questions: 5, test: 35 },
+    'Islamic Studies': { pages: 10, questions: 5, verses: 2, test: 30 },
+    'Art':             { pages: 20, questions: 10, test: 30 },
+    'Nazra':           { pages: 10, verses: 1, test: 20 },
+    'Arabic':          { pages: 12, questions: 5, verses: 2, test: 30 },
+    'Other':           { pages: 10, questions: 5, test: 30 }
   };
 
   // Ticks on the sheet → minutes compared with the plan.
@@ -87,6 +104,8 @@
   function rateFor(rates, subject, type) {
     const r = rates && rates[subject] && rates[subject][type];
     if (typeof r === 'number' && r > 0) return r;
+    const d = DEFAULT_RATES[subject] && DEFAULT_RATES[subject][type];
+    if (typeof d === 'number') return d;
     return TASK_TYPES[type] ? TASK_TYPES[type].defaultRate : 10;
   }
 
@@ -390,7 +409,7 @@
   }
 
   const api = {
-    SUBJECTS: SUBJECTS, TASK_TYPES: TASK_TYPES, RATE_TYPES: RATE_TYPES, DEFAULT_SETTINGS: DEFAULT_SETTINGS,
+    SUBJECTS: SUBJECTS, TASK_TYPES: TASK_TYPES, DEFAULT_RATES: DEFAULT_RATES, RATE_TYPES: RATE_TYPES, DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     TIME_BUCKETS: TIME_BUCKETS, STATUS: STATUS, DIFFICULTY: DIFFICULTY, FOCUS: FOCUS, LATE_REASONS: LATE_REASONS,
     toMin: toMin, toHHMM: toHHMM, to12h: to12h, round5: round5,
     rateFor: rateFor, estimate: estimate, suggestOrder: suggestOrder, buildPlan: buildPlan,

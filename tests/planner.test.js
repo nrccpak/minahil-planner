@@ -19,7 +19,7 @@ t('estimate uses per-unit rate, rounds to 5, min 5', () => {
   assert.equal(P.estimate({ subject: 'Nazra', type: 'verses', units: 2 }, rates), 5);
   assert.equal(P.estimate({ subject: 'Art', type: 'minutes', units: 25 }, rates), 25);
   assert.equal(P.estimate({ subject: 'Maths', type: 'questions', units: 3, override: 33 }, rates), 35);
-  assert.equal(P.estimate({ subject: 'Urdu-R', type: 'pages', units: 6 }, {}), 60); // default 10/page
+  assert.equal(P.estimate({ subject: 'Urdu-R', type: 'pages', units: 6 }, {}), 50); // built-in 8/page → 48 → 50
 });
 
 t('suggested order: test, due, then bigger', () => {
@@ -81,11 +81,12 @@ t('revision suggested on light days only', () => {
 });
 
 t('morning slot ends at school wake-up; capacity from earliest wake', () => {
-  const m = P.morningPlan(40, S);
-  assert.equal(P.toHHMM(m.wake), '05:50');
+  // School wake-up 5:30, earliest 5:00 → only 30 min of morning room
+  const m = P.morningPlan(25, S);
+  assert.equal(P.toHHMM(m.wake), '05:05');
   assert.ok(m.fits);
-  const big = P.morningPlan(120, S);
-  assert.ok(!big.fits); assert.equal(big.overMin, 30);
+  const big = P.morningPlan(40, S);
+  assert.ok(!big.fits); assert.equal(big.overMin, 10);
 });
 
 t('lowest priority skips tests and due-tomorrow', () => {
