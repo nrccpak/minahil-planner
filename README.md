@@ -62,9 +62,18 @@ Homework diary planner for Minahil. Plan at 3:20, study on paper 3:30–7:30, ti
 - "Delete everything" clears only that phone and signs it out; the cloud copy stays.
 - Files: `sync.js`, `vendor/supabase.js` (supabase-js 2.118.0, bundled for offline use), `supabase/schema.sql`.
 
+
+## Phase 4 (built)
+
+- **Weekend mode:** on Fridays, "Weekend plan" spreads the diary over Friday (3:30–7:30), Saturday and Sunday (2:00–7:00). Tests for Monday go on Sunday as revision; Sunday is kept lighter. Saturday's and Sunday's tasks appear on those days' Today screens. "Undo spread" puts them back.
+- **Exam mode:** My day (or Parent) → Exam date sheet. Enter each paper's date, subject and how hard it is. From the start date to the last paper, Today shows the papers to go and a revision plan for the day (harder and nearer papers get more time). Exam revision does not change the normal learned times.
+- **Alerts:** Parent tab shows real problems only: 3 days in a row past the line; the same subject marked "Didn't understand"/"Need help" 3+ times in 10 school days; morning catch-up on 3 of the last 5 days.
+- **Emails (Google Apps Script, `email-report/`):** weekly summary every Sunday ~8 pm and alert emails (each problem once) to the parent. Setup: Script properties `SUPABASE_KEY` (Supabase secret key) and `REPORT_TO`, then run `setup()` once.
+- **Still to come:** app notifications that follow weekends/Pause/Exam (needs a push server); the Clock alarms cover this for now.
+
 ## Next steps
 
 - **Supabase sync**: done (see above).
 - **Phase 2**: Gemini reads the diary photo and the ticked sheet (via a Supabase function, key never on the phone), tuned on the photos collected in Phase 1.
 - **Phase 3**: adaptive block length, daily tip.
-- **Phase 4**: Sunday email, alerts, full weekend mode, Exam mode, app notifications.
+- **Phase 4**: done except app notifications (see above).
