@@ -214,6 +214,7 @@
     const m = (err && err.message) || '';
     if (/invalid login/i.test(m)) return 'Email or password is not right.';
     if (/email not confirmed/i.test(m)) return 'Open the confirmation email from Supabase first, then sign in.';
+    if (/signups? not allowed|signup.*disabled/i.test(m)) return 'New accounts are switched off. Use Sign in with the family account.';
     if (/already registered/i.test(m)) return 'This email already has an account. Use Sign in.';
     if (/password/i.test(m) && /6/.test(m)) return 'Password needs at least 6 characters.';
     if (/fetch|network/i.test(m)) return 'No internet connection. Try again when online.';
