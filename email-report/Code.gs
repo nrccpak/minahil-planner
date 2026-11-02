@@ -16,8 +16,8 @@ var APP_URL = 'https://nrccpak.github.io/minahil-planner/';
 
 function cfg_() {
   var p = PropertiesService.getScriptProperties();
-  var key = p.getProperty('SUPABASE_KEY');
-  var to = p.getProperty('REPORT_TO');
+  var key = (p.getProperty('SUPABASE_KEY') || '').trim();
+  var to = (p.getProperty('REPORT_TO') || '').trim();
   if (!key || !to) throw new Error('Add SUPABASE_KEY and REPORT_TO in Project Settings → Script properties.');
   return { key: key, to: to };
 }
@@ -142,4 +142,14 @@ function setup() {
   var r = buildWeekly_(today_());
   MailApp.sendEmail({ to: cfg_().to, subject: '[Test] ' + r.subject, htmlBody: r.html, name: 'Minahil’s Planner' });
   Logger.log('Done: weekly report Sundays ~8 pm, alert check daily ~9:30 pm (Pakistan time). Test email sent.');
+}
+
+/** Troubleshooting: shows what Supabase answers, without printing the key. */
+function checkConnection() {
+  var raw = PropertiesService.getScriptProperties().getProperty('SUPABASE_KEY') || '';
+  var key = raw.trim();
+  Logger.log('Key saved: ' + (key ? 'yes' : 'NO') + ' · starts with sb_secret_: ' + (key.indexOf('sb_secret_') === 0) +
+    ' · length ' + key.length + ' · extra spaces removed: ' + (raw.length - key.length));
+  var res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/app_kv?select=key&limit=1', { headers: { apikey: key }, muteHttpExceptions: true });
+  Logger.log('Supabase answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
 }
