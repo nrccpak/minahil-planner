@@ -163,7 +163,7 @@ main {
 /* ---------- inputs ---------- */
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; font-weight: 700; }
 label.field > span.hint { font-weight: 400; color: var(--ink-soft); font-size: .82rem; }
-input[type="text"], input[type="number"], input[type="time"], input[type="password"], input[type="tel"], textarea, select {
+input[type="text"], input[type="email"], input[type="number"], input[type="time"], input[type="password"], input[type="tel"], textarea, select {
   border: 1px solid var(--rule-strong); background: var(--page); border-radius: 10px; padding: 10px 12px; min-height: 44px; width: 100%;
 }
 textarea { min-height: 64px; resize: vertical; }

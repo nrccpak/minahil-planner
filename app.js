@@ -21,6 +21,8 @@
     samples: {},
     subjectScore: {},
     carry: [],              // tasks moved to the weekend / later
+    kvStamp: {},            // when each setting was last changed (for cloud sync)
+    cloud: { email: '', error: '', busy: false, info: '' },
     date: todayStr(),
     day: null,
     days: [],
@@ -84,13 +86,57 @@
   };
 
   // ---------- persistence ----------
-  function saveKv(key) { return Store.kvSet(key, S[key]); }
+  const SYNC_KEYS = ['settings', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'pins'];
+  function saveKv(key) {
+    if (SYNC_KEYS.indexOf(key) >= 0) { S.kvStamp[key] = new Date().toISOString(); Store.kvSet('kvStamp', S.kvStamp); }
+    const p = Store.kvSet(key, S[key]);
+    if (window.Sync) Sync.schedule();
+    return p;
+  }
+  function putDayLocal(day) {
+    const i = S.days.findIndex(function (d) { return d.date === day.date; });
+    if (i >= 0) S.days[i] = day; else { S.days.push(day); S.days.sort(function (a, b) { return a.date < b.date ? -1 : 1; }); }
+  }
   function saveDay(day) {
     day = day || S.day;
     day.updatedAt = new Date().toISOString();
-    const i = S.days.findIndex(function (d) { return d.date === day.date; });
-    if (i >= 0) S.days[i] = day; else { S.days.push(day); S.days.sort(function (a, b) { return a.date < b.date ? -1 : 1; }); }
-    return Store.daySet(day.date, day);
+    putDayLocal(day);
+    const p = Store.daySet(day.date, day);
+    if (window.Sync) Sync.schedule();
+    return p;
+  }
+  function isTyping() {
+    const a = document.activeElement;
+    return !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT'));
+  }
+  function softRender() {
+    if (S.modal || isTyping() || drag) return;
+    if (S.view === 'evening') { const d = fbDay(); if (d && d.feedback) readDailyInputs(d.feedback); }
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  const syncAdapter = {
+    kvStamp: function (k) { return S.kvStamp[k]; },
+    kvValue: function (k) { return S[k]; },
+    applyKv: async function (k, v, stamp) {
+      S[k] = k === 'settings' ? Object.assign({}, APP_DEFAULTS, v) : v;
+      S.kvStamp[k] = stamp;
+      await Store.kvSet(k, S[k]); await Store.kvSet('kvStamp', S.kvStamp);
+    },
+    days: function () { return S.days; },
+    applyDay: async function (doc) {
+      await Store.daySet(doc.date, doc);
+      putDayLocal(doc);
+      if (doc.date === S.date) { S.day = doc; S.diaryPhoto = null; }
+    },
+    getPhoto: function (k) { return Store.photoGet(k); },
+    onStatus: function () { if (S.view === 'parent' || !S.pins) softRender(); },
+    onRemoteChange: function () { softRender(); }
+  };
+  function photoLocalOrCloud(key) {
+    return Store.photoGet(key).then(function (p) {
+      if (p || !window.Sync || !Sync.user()) return p || null;
+      return Sync.downloadPhoto(key).then(function (d) { if (d) Store.photoSet(key, d); return d; });
+    });
   }
   function newDay(date) {
     return { date: date, createdAt: new Date().toISOString(), tasks: [], manual: false, pause: false, different: null,
@@ -101,15 +147,21 @@
 
   async function boot() {
     try { await Store.open(); } catch (e) { /* memory fallback */ }
-    const keys = ['settings', 'pins', 'meta', 'rates', 'samples', 'subjectScore', 'carry'];
+    const keys = ['settings', 'pins', 'meta', 'rates', 'samples', 'subjectScore', 'carry', 'kvStamp'];
     const vals = await Promise.all(keys.map(function (k) { return Store.kvGet(k); }));
     keys.forEach(function (k, i) { if (vals[i] !== undefined && vals[i] !== null) S[k] = vals[i]; });
     S.settings = Object.assign({}, APP_DEFAULTS, S.settings || {});
     S.days = await Store.daysAll();
     S.day = getDay(S.date) || newDay(S.date);
+    S.kvStamp = S.kvStamp || {};
     S.ready = true;
     Store.persist();
     render();
+    if (window.Sync) {
+      try { await Sync.init(syncAdapter); } catch (e) { /* offline is fine */ }
+      if (Sync.user()) Sync.syncNow();
+      softRender();
+    }
   }
 
   // ---------- PIN ----------
@@ -209,9 +261,37 @@
       '<label class="field">Minahil’s PIN<input id="setup-kid" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" required></label>' +
       (st.error ? '<div class="notice warn"><b>' + esc(st.error) + '</b></div>' : '') +
       '<button class="btn primary block" type="submit">Save PINs</button>' +
-      '<p class="small muted">Everything stays on this phone in Phase 1. Make a backup now and then from the Parent tab.</p>' +
-      '</form></div>';
+      '<p class="small muted">Use this on the first phone. On another phone, restore from the cloud below instead.</p>' +
+      '</form>' + renderRestoreCard() + '</div>';
   }
+  function renderRestoreCard() {
+    if (!window.Sync || !Sync.available()) return '';
+    const c = S.cloud;
+    return '<form class="card" id="restore-form" autocomplete="on" style="margin-top:16px">' +
+      '<span class="step-label">Already using the planner?</span><h2>Restore from the cloud</h2>' +
+      '<p class="small muted">Sign in with the family account to bring the PINs, days and learned times onto this phone.</p>' +
+      '<label class="field">Email<input id="restore-email" type="email" autocomplete="username" required value="' + esc(c.email) + '"></label>' +
+      '<label class="field">Password<input id="restore-pass" type="password" autocomplete="current-password" required></label>' +
+      (c.error ? '<div class="notice warn"><b>' + esc(c.error) + '</b></div>' : '') +
+      '<button class="btn block" type="submit"' + (c.busy ? ' disabled' : '') + '>' + (c.busy ? 'Restoring…' : 'Sign in and restore') + '</button></form>';
+  }
+  async function submitRestore(e) {
+    e.preventDefault();
+    const email = document.getElementById('restore-email').value.trim();
+    const pass = document.getElementById('restore-pass').value;
+    S.cloud.email = email; S.cloud.error = ''; S.cloud.busy = true; render();
+    try {
+      await Sync.signIn(email, pass);
+      const r = await Sync.syncNow();
+      S.cloud.busy = false;
+      if (!r.ok) S.cloud.error = r.reason;
+      else if (!S.pins) S.cloud.error = 'Signed in, but no planner data was found in this account yet. Set the PINs above.';
+      else toast('Restored from the cloud');
+    } catch (err) { S.cloud.busy = false; S.cloud.error = err.message; }
+    S.day = getDay(S.date) || newDay(S.date);
+    render();
+  }
+
   async function submitSetup(e) {
     e.preventDefault();
     const p = document.getElementById('setup-parent').value.trim();
@@ -948,7 +1028,8 @@
       '<p class="small muted">App notifications that follow weekends and holidays come in Phase 4.</p></div>';
 
     // Backup + PIN + install
-    html += '<div class="card"><h2>Backup</h2><p class="small muted">Phase 1 keeps data only on this phone. Download a backup each week (Google Drive or WhatsApp to yourself works). Supabase sync is the next step.</p>' +
+    html += renderCloudCard();
+    html += '<div class="card"><h2>Backup file</h2><p class="small muted">An extra copy you keep yourself. With cloud sync on, once a month is plenty.</p>' +
       '<div class="row"><button class="btn grow" type="button" data-act="export">Download backup</button>' +
       '<label class="btn grow" for="import-file">Restore backup</label><input id="import-file" type="file" accept="application/json,.json" hidden></div>' +
       (Store.isMemoryOnly() ? '<div class="notice warn"><b>This browser is not saving data.</b><span class="body">Open the app in Chrome (not a private tab).</span></div>' : '') + '</div>';
@@ -961,6 +1042,55 @@
       '<button class="btn warn" type="button" data-act="reset">Delete everything</button></div>';
     return html;
   }
+  function renderCloudCard() {
+    if (!window.Sync || !Sync.available()) {
+      return '<div class="card"><h2>Cloud sync</h2><p class="muted">Cloud sync could not load. Check the internet connection and reopen the app.</p></div>';
+    }
+    const c = S.cloud, u = Sync.user(), st = Sync.status;
+    if (!u) {
+      return '<form class="card" id="cloud-form" autocomplete="on"><h2>Cloud sync</h2>' +
+        '<p class="small muted">Sign in with the family account so every day is saved online and you can see her reports on your own phone. One account for the whole family.</p>' +
+        '<label class="field">Email<input id="cloud-email" type="email" autocomplete="username" required value="' + esc(c.email) + '"></label>' +
+        '<label class="field">Password<input id="cloud-pass" type="password" autocomplete="current-password" minlength="6" required><span class="hint">At least 6 characters</span></label>' +
+        (c.error ? '<div class="notice warn"><b>' + esc(c.error) + '</b></div>' : '') +
+        (c.info ? '<div class="notice info"><span class="body">' + esc(c.info) + '</span></div>' : '') +
+        '<div class="row"><button class="btn primary grow" type="submit"' + (c.busy ? ' disabled' : '') + '>Sign in</button>' +
+        '<button class="btn grow" type="button" data-act="cloud-signup"' + (c.busy ? ' disabled' : '') + '>Create account</button></div></form>';
+    }
+    const phase = st.phase === 'syncing' ? 'Syncing…' : st.phase === 'error' ? 'Not synced: ' + st.error : st.lastSync ? 'Synced ' + new Date(st.lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'Signed in';
+    const pend = Sync.pendingCount();
+    return '<div class="card"><div class="section-head"><h2>Cloud sync</h2><span class="tag ' + (st.phase === 'error' ? 'test' : 'morning') + '">' + (st.phase === 'error' ? 'Offline' : 'On') + '</span></div>' +
+      '<p class="small">Signed in as <b>' + esc(u.email) + '</b></p>' +
+      '<p class="small muted">' + esc(phase) + (pend ? ' · ' + pend + ' waiting to upload' : '') + '</p>' +
+      '<div class="row"><button class="btn grow" type="button" data-act="cloud-sync">Sync now</button>' +
+      '<button class="btn ghost" type="button" data-act="cloud-signout">Sign out</button></div></div>';
+  }
+  async function submitCloud(e, create) {
+    if (e) e.preventDefault();
+    const email = document.getElementById('cloud-email').value.trim();
+    const pass = document.getElementById('cloud-pass').value;
+    S.cloud.email = email; S.cloud.error = ''; S.cloud.info = '';
+    if (!email || pass.length < 6) { S.cloud.error = 'Enter the email and a password of at least 6 characters.'; return render(); }
+    S.cloud.busy = true; render();
+    try {
+      if (create) {
+        const r = await Sync.signUp(email, pass);
+        if (r.confirm) { S.cloud.info = 'Account created. Open the email from Supabase and tap the confirm link, then come back here and tap Sign in.'; S.cloud.busy = false; return render(); }
+      } else {
+        await Sync.signIn(email, pass);
+      }
+      // First upload: mark everything on this phone as changed so it all goes up.
+      SYNC_KEYS.forEach(function (k) { if (S[k] != null && !S.kvStamp[k]) S.kvStamp[k] = new Date().toISOString(); });
+      await Store.kvSet('kvStamp', S.kvStamp);
+      for (const d of S.days) { if (!d.updatedAt) { d.updatedAt = new Date().toISOString(); await Store.daySet(d.date, d); } }
+      for (const p of await Store.photosAll()) await Sync.queuePhoto(p.key);
+      const res = await Sync.syncNow();
+      S.cloud.busy = false;
+      toast(res.ok ? 'Cloud sync is on' : 'Signed in; sync will retry when online');
+    } catch (err) { S.cloud.busy = false; S.cloud.error = err.message; }
+    render();
+  }
+
   async function saveSettings(e) {
     e.preventDefault();
     const s = S.settings;
@@ -1045,8 +1175,8 @@
         const kv = data.kv || {};
         for (const k of Object.keys(kv)) { S[k] = kv[k]; await saveKv(k); }
         S.settings = Object.assign({}, APP_DEFAULTS, S.settings || {});
-        for (const d of (data.days || [])) await Store.daySet(d.date, d);
-        for (const k of Object.keys(data.photos || {})) await Store.photoSet(k, data.photos[k]);
+        for (const d of (data.days || [])) { d.updatedAt = new Date().toISOString(); await Store.daySet(d.date, d); }
+        for (const k of Object.keys(data.photos || {})) { await Store.photoSet(k, data.photos[k]); if (window.Sync) await Sync.queuePhoto(k); }
         S.days = await Store.daysAll();
         S.day = getDay(S.date) || newDay(S.date);
         toast('Backup restored');
@@ -1077,6 +1207,7 @@
     try {
       const data = await compressImage(file, 1600);
       await Store.photoSet(S.day.date + ':diary', data);
+      if (window.Sync) Sync.queuePhoto(S.day.date + ':diary');
       S.day.hasPhoto = true; S.diaryPhoto = data;
       await saveDay();
       toast('Diary photo saved');
@@ -1089,6 +1220,7 @@
       const f = ensureFeedback(day); readDailyInputs(f);
       const data = await compressImage(file, 1600);
       await Store.photoSet(day.date + ':sheet', data);
+      if (window.Sync) Sync.queuePhoto(day.date + ':sheet');
       day.hasSheetPhoto = true;
       await saveDay(day);
       toast('Sheet photo saved');
@@ -1110,7 +1242,7 @@
   function afterRender() {
     if (S.view === 'sheet') { fitSheetPreview(); }
     if (S.view === 'today' && S.day.hasPhoto && !S.diaryPhoto) {
-      Store.photoGet(S.day.date + ':diary').then(function (p) { if (p) { S.diaryPhoto = p; if (S.view === 'today' && !S.day.locked) render(); } });
+      photoLocalOrCloud(S.day.date + ':diary').then(function (p) { if (p) { S.diaryPhoto = p; if (S.view === 'today' && !S.day.locked) softRender(); } });
     }
   }
 
@@ -1171,6 +1303,8 @@
   document.addEventListener('submit', function (e) {
     const id = e.target.id;
     if (id === 'setup-form') submitSetup(e);
+    else if (id === 'restore-form') submitRestore(e);
+    else if (id === 'cloud-form') submitCloud(e, false);
     else if (id === 'task-form') saveTaskModal(e);
     else if (id === 'settings-form') saveSettings(e);
     else if (id === 'pin-form') savePins(e);
@@ -1325,13 +1459,22 @@
       case 'fb-save': saveFeedback(el.getAttribute('data-date')); break;
       case 'open-day': {
         const date = el.getAttribute('data-date');
-        S.modal = { kind: 'day', date: date, photo: await Store.photoGet(date + ':diary'), sheetPhoto: await Store.photoGet(date + ':sheet') };
+        const dd = getDay(date) || {};
+        S.modal = { kind: 'day', date: date, photo: dd.hasPhoto ? await photoLocalOrCloud(date + ':diary') : null, sheetPhoto: dd.hasSheetPhoto ? await photoLocalOrCloud(date + ':sheet') : null };
         render(); break;
       }
       case 'export': exportBackup(); break;
+      case 'cloud-signup': submitCloud(null, true); break;
+      case 'cloud-sync': Sync.syncNow().then(function (r) { toast(r.ok ? 'Synced' : 'Not synced: ' + r.reason); render(); }); render(); break;
+      case 'cloud-signout':
+        confirmBox('Sign out of cloud sync?', 'Everything stays on this phone, but new changes will no longer be saved online until you sign in again.', 'Sign out', false, async function () {
+          await Sync.signOut(); toast('Signed out');
+        });
+        break;
       case 'install': if (S.installEvt) { S.installEvt.prompt(); S.installEvt = null; render(); } break;
       case 'reset':
-        confirmBox('Delete everything?', 'All days, photos, learned times and PINs on this phone will be removed. Download a backup first if you may need it.', 'Delete everything', true, async function () {
+        confirmBox('Delete everything on this phone?', 'All days, photos, learned times and PINs on this phone will be removed, and this phone is signed out of cloud sync. The cloud copy stays and can be restored by signing in again.', 'Delete everything', true, async function () {
+          if (window.Sync && Sync.user()) { try { await Sync.signOut(); } catch (e) { /* ignore */ } }
           await Store.clearAll();
           location.reload();
         });
@@ -1351,6 +1494,7 @@
     else {
       if (S.role && S.hiddenAt && Date.now() - S.hiddenAt > LOCK_MS()) lock();
       else if (S.role) { const before = S.date; refreshDate(); if (before !== S.date) render(); }
+      if (window.Sync && Sync.user()) Sync.syncNow();
     }
   });
   setInterval(function () { if (S.role && !drag && Date.now() - S.lastActive > LOCK_MS()) lock(); }, 30000);

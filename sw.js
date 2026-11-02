@@ -1,6 +1,6 @@
 /* Offline cache for the app shell. Bump VERSION when files change. */
-const VERSION = 'mh-planner-v2';
-const SHELL = ['./', 'index.html', 'styles.css', 'planner.js', 'store.js', 'app.js', 'manifest.webmanifest',
+const VERSION = 'mh-planner-v3';
+const SHELL = ['./', 'index.html', 'styles.css', 'planner.js', 'store.js', 'sync.js', 'vendor/supabase.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
