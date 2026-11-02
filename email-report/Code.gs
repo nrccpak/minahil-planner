@@ -14,9 +14,12 @@
 var SUPABASE_URL = 'https://ejiatkzbqbxclpsigoaf.supabase.co';
 var APP_URL = 'https://nrccpak.github.io/minahil-planner/';
 
+/** Remove spaces and invisible characters that sneak in when copying a key. */
+function cleanKey_(raw) { return String(raw || '').replace(/[\s\u00A0\u200B-\u200D\u2060\uFEFF]/g, ''); }
+
 function cfg_() {
   var p = PropertiesService.getScriptProperties();
-  var key = (p.getProperty('SUPABASE_KEY') || '').trim();
+  var key = cleanKey_(p.getProperty('SUPABASE_KEY'));
   var to = (p.getProperty('REPORT_TO') || '').trim();
   if (!key || !to) throw new Error('Add SUPABASE_KEY and REPORT_TO in Project Settings → Script properties.');
   return { key: key, to: to };
@@ -147,9 +150,10 @@ function setup() {
 /** Troubleshooting: shows what Supabase answers, without printing the key. */
 function checkConnection() {
   var raw = PropertiesService.getScriptProperties().getProperty('SUPABASE_KEY') || '';
-  var key = raw.trim();
+  var key = cleanKey_(raw);
+  var odd = key.replace(/[A-Za-z0-9_\-]/g, '');
   Logger.log('Key saved: ' + (key ? 'yes' : 'NO') + ' · starts with sb_secret_: ' + (key.indexOf('sb_secret_') === 0) +
-    ' · length ' + key.length + ' · extra spaces removed: ' + (raw.length - key.length));
+    ' · length ' + key.length + ' (was ' + raw.length + ') · unusual characters left: ' + odd.length);
   var res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/app_kv?select=key&limit=1', { headers: { apikey: key }, muteHttpExceptions: true });
   Logger.log('Supabase answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
 }
