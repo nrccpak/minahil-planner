@@ -1,5 +1,7 @@
 # Minahil's Planner — Phase 1 (Core planner)
 
+**Live app:** https://nrccpak.github.io/minahil-planner/
+
 Homework diary planner for Minahil. Plan at 3:20, study on paper 3:30–7:30, tick feedback in the evening, and the app plans better the next day. Phase 1 has **no AI and no cost**; all data stays on the phone.
 
 ## What Phase 1 does
